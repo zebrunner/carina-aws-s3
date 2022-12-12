@@ -54,7 +54,16 @@ import java.util.regex.Pattern;
 public class AmazonS3Manager implements CloudManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private static final Pattern S3_BUCKET_PATTERN = Pattern.compile("s3:\\/\\/([a-zA-Z-0-9][^\\/]*)\\/(.*)");
-    private static volatile AmazonS3Manager instance = null;
+    private static final String AMAZON_SERVICE_EXCEPTION_MESSAGE = "Caught an AmazonServiceException, which means your request made it to Amazon S3, "
+            + "but was rejected with an error response for some reason.\n"
+            + "Error Message:    {}\n"
+            + "HTTP Status Code: {}\n"
+            + "AWS Error Code:   {}\n"
+            + "Error Type:       {}\n"
+            + "Request ID:       {}";
+    private static final String AMAZON_CLIENT_EXCEPTION_MESSAGE = "Caught an AmazonClientException, which means the client encountered "
+            + "an internal error while trying to communicate with S3, such as not being able to access the network.\nError Message: {}";
+    private static AmazonS3Manager instance = null;
     private AmazonS3 s3client = null;
 
     private AmazonS3Manager() {
@@ -104,21 +113,10 @@ public class AmazonS3Manager implements CloudManager {
             LOGGER.debug("Uploaded to S3: '{}' with key '{}'", from, amazonS3URI.getKey());
             isSuccessful = true;
         } catch (AmazonServiceException ase) {
-            LOGGER.error("Caught an AmazonServiceException, which "
-                    + "means your request made it "
-                    + "to Amazon S3, but was rejected with an error response for some reason.\n"
-                    + "Error Message:    " + ase.getMessage() + "\n"
-                    + "HTTP Status Code: " + ase.getStatusCode() + "\n"
-                    + "AWS Error Code:   " + ase.getErrorCode() + "\n"
-                    + "Error Type:       " + ase.getErrorType() + "\n"
-                    + "Request ID:       " + ase.getRequestId());
+            LOGGER.error(AMAZON_SERVICE_EXCEPTION_MESSAGE, ase.getMessage(), ase.getStatusCode(), ase.getErrorCode(), ase.getErrorType(),
+                    ase.getRequestId());
         } catch (AmazonClientException ace) {
-            LOGGER.error("Caught an AmazonClientException, which "
-                    + "means the client encountered "
-                    + "an internal error while trying to "
-                    + "communicate with S3, "
-                    + "such as not being able to access the network.\n"
-                    + "Error Message: " + ace.getMessage());
+            LOGGER.error(AMAZON_CLIENT_EXCEPTION_MESSAGE, ace.getMessage());
         } catch (Exception e) {
             LOGGER.error("Something went wrong when try to put artifact to the Amazon S3.", e);
         }
@@ -170,16 +168,10 @@ public class AmazonS3Manager implements CloudManager {
             this.s3client.deleteObject(new DeleteObjectRequest(amazonS3URI.getBucket(), amazonS3URI.getKey()));
             isSuccessful = true;
         } catch (AmazonServiceException ase) {
-            LOGGER.error("Caught an AmazonServiceException, which "
-                    + "means your request made it "
-                    + "to Amazon S3, but was rejected with an error response for some reason.\n"
-                    + "Error Message:    " + ase.getMessage() + "\n"
-                    + "HTTP Status Code: " + ase.getStatusCode() + "\n"
-                    + "AWS Error Code:   " + ase.getErrorCode() + "\n"
-                    + "Error Type:       " + ase.getErrorType() + "\n"
-                    + "Request ID:       " + ase.getRequestId());
+            LOGGER.error(AMAZON_SERVICE_EXCEPTION_MESSAGE, ase.getMessage(), ase.getStatusCode(), ase.getErrorCode(), ase.getErrorType(),
+                    ase.getRequestId());
         } catch (AmazonClientException ace) {
-            LOGGER.error("Caught an AmazonClientException.\nError Message: {}", ace.getMessage());
+            LOGGER.error(AMAZON_CLIENT_EXCEPTION_MESSAGE, ace.getMessage());
         } catch (Exception e) {
             LOGGER.error("Something went wrong when try to delete artifact from Amazon S3", e);
         }
@@ -204,7 +196,7 @@ public class AmazonS3Manager implements CloudManager {
             int position = key.indexOf(".*");
             if (position > 0) {
                 // /android/develop/dfgdfg.*/Mapmyrun.apk
-                int slashPosition = key.substring(0, position).lastIndexOf("/");
+                int slashPosition = key.substring(0, position).lastIndexOf('/');
                 if (slashPosition > 0) {
                     key = key.substring(0, slashPosition);
                     S3ObjectSummary lastBuild = getLatestBuildArtifact(bucketName, key,
@@ -248,37 +240,27 @@ public class AmazonS3Manager implements CloudManager {
      */
     public void put(String bucket, String key, String filePath, ObjectMetadata metadata) {
 
-        /*
-         * if (mode != S3Mode.WRITE) {
-         * if (mode == S3Mode.READ) {
-         * LOGGER.warn("Unable to put data in READ mode!");
-         * }
-         * return;
-         * }
-         */
-
         if (key == null) {
-            throw new RuntimeException("Key is null!");
+            throw new IllegalArgumentException("Key should not be null!");
         }
         if (key.isEmpty()) {
-            throw new RuntimeException("Key is empty!");
+            throw new IllegalArgumentException("Key should not be empty!");
         }
 
         if (filePath == null) {
-            throw new RuntimeException("FilePath is null!");
+            throw new IllegalArgumentException("FilePath should not be null!");
         }
         if (filePath.isEmpty()) {
-            throw new RuntimeException("FilePath is empty!");
+            throw new IllegalArgumentException("FilePath should not be empty!");
         }
 
         File file = new File(filePath);
         if (!file.exists()) {
-            throw new RuntimeException("File does not exist! " + filePath);
+            throw new IllegalArgumentException("File should exists! " + filePath);
         }
 
         try {
-            LOGGER.debug("Uploading a new object to S3 from a file: "
-                    + filePath);
+            LOGGER.debug("Uploading a new object to S3 from a file: {}", filePath);
 
             PutObjectRequest object = new PutObjectRequest(bucket, key, file);
             if (metadata != null) {
@@ -286,25 +268,13 @@ public class AmazonS3Manager implements CloudManager {
             }
 
             s3client.putObject(object);
-            LOGGER.debug("Uploaded to S3: '" + filePath + "' with key '" + key
-                    + "'");
+            LOGGER.debug("Uploaded to S3: '{}' with key '{}'", filePath, key);
 
         } catch (AmazonServiceException ase) {
-            LOGGER.error("Caught an AmazonServiceException, which "
-                    + "means your request made it "
-                    + "to Amazon S3, but was rejected with an error response for some reason.\n"
-                    + "Error Message:    " + ase.getMessage() + "\n"
-                    + "HTTP Status Code: " + ase.getStatusCode() + "\n"
-                    + "AWS Error Code:   " + ase.getErrorCode() + "\n"
-                    + "Error Type:       " + ase.getErrorType() + "\n"
-                    + "Request ID:       " + ase.getRequestId());
+            LOGGER.error(AMAZON_SERVICE_EXCEPTION_MESSAGE, ase.getMessage(), ase.getStatusCode(), ase.getErrorCode(), ase.getErrorType(),
+                    ase.getRequestId());
         } catch (AmazonClientException ace) {
-            LOGGER.error("Caught an AmazonClientException, which "
-                    + "means the client encountered "
-                    + "an internal error while trying to "
-                    + "communicate with S3, "
-                    + "such as not being able to access the network.\n"
-                    + "Error Message: " + ace.getMessage());
+            LOGGER.error(AMAZON_CLIENT_EXCEPTION_MESSAGE, ace.getMessage());
         }
     }
 
@@ -316,26 +286,18 @@ public class AmazonS3Manager implements CloudManager {
      * @return see {@link S3Object}
      */
     public S3Object get(String bucket, String key) {
-        // S3Object s3object = null;
-
-        /*
-         * if (mode != S3Mode.WRITE && mode != S3Mode.READ) {
-         * throw new RuntimeException("Unable to get S3 object in OFF mode!");
-         * }
-         */
-
         if (bucket == null) {
-            throw new RuntimeException("Bucket is null!");
+            throw new IllegalArgumentException("Bucket should not be null!");
         }
         if (bucket.isEmpty()) {
-            throw new RuntimeException("Bucket is empty!");
+            throw new IllegalArgumentException("Bucket should not be empty!");
         }
 
         if (key == null) {
-            throw new RuntimeException("Key is null!");
+            throw new IllegalArgumentException("Key should not be null!");
         }
         if (key.isEmpty()) {
-            throw new RuntimeException("Key is empty!");
+            throw new IllegalArgumentException("Key should not be empty!");
         }
 
         try {
@@ -344,34 +306,16 @@ public class AmazonS3Manager implements CloudManager {
             // downloading
             S3Object s3object = s3client.getObject(new GetObjectRequest(bucket,
                     key));
-            LOGGER.info("Content-Type: "
-                    + s3object.getObjectMetadata().getContentType());
+            LOGGER.info("Content-Type: {}", s3object.getObjectMetadata().getContentType());
             return s3object;
-            /*
-             * GetObjectRequest rangeObjectRequest = new GetObjectRequest(
-             * bucketName, key); rangeObjectRequest.setRange(0, 10); S3Object
-             * objectPortion = s3client.getObject(rangeObjectRequest);
-             */
         } catch (AmazonServiceException ase) {
-            LOGGER.error("Caught an AmazonServiceException, which "
-                    + "means your request made it "
-                    + "to Amazon S3, but was rejected with an error response for some reason.\n"
-                    + "Error Message:    " + ase.getMessage() + "\n"
-                    + "HTTP Status Code: " + ase.getStatusCode() + "\n"
-                    + "AWS Error Code:   " + ase.getErrorCode() + "\n"
-                    + "Error Type:       " + ase.getErrorType() + "\n"
-                    + "Request ID:       " + ase.getRequestId());
+            LOGGER.error(AMAZON_SERVICE_EXCEPTION_MESSAGE, ase.getMessage(), ase.getStatusCode(), ase.getErrorCode(), ase.getErrorType(),
+                    ase.getRequestId());
         } catch (AmazonClientException ace) {
-            LOGGER.error("Caught an AmazonClientException, which "
-                    + "means the client encountered "
-                    + "an internal error while trying to "
-                    + "communicate with S3, "
-                    + "such as not being able to access the network.\n"
-                    + "Error Message: " + ace.getMessage());
+            LOGGER.error(AMAZON_CLIENT_EXCEPTION_MESSAGE, ace.getMessage());
         }
         // TODO investigate pros and cons returning null
-        throw new RuntimeException("Unable to download '" + key
-                + "' from Amazon S3 bucket '" + bucket + "'");
+        throw new RuntimeException(String.format("Unable to download '%s' from Amazon S3 bucket '%s'", key, bucket));
     }
 
     /**
@@ -382,26 +326,20 @@ public class AmazonS3Manager implements CloudManager {
      */
     public void delete(String bucket, String key) {
         if (key == null) {
-            throw new RuntimeException("Key is null!");
+            throw new IllegalArgumentException("Key should not be null!");
         }
         if (key.isEmpty()) {
-            throw new RuntimeException("Key is empty!");
+            throw new IllegalArgumentException("Key should not be empty!");
         }
 
         try {
             s3client.deleteObject(new DeleteObjectRequest(bucket, key));
         } catch (AmazonServiceException ase) {
-            LOGGER.error("Caught an AmazonServiceException, which "
-                    + "means your request made it "
-                    + "to Amazon S3, but was rejected with an error response for some reason.\n"
-                    + "Error Message:    " + ase.getMessage() + "\n"
-                    + "HTTP Status Code: " + ase.getStatusCode() + "\n"
-                    + "AWS Error Code:   " + ase.getErrorCode() + "\n"
-                    + "Error Type:       " + ase.getErrorType() + "\n"
-                    + "Request ID:       " + ase.getRequestId());
+            LOGGER.error(AMAZON_SERVICE_EXCEPTION_MESSAGE, ase.getMessage(), ase.getStatusCode(), ase.getErrorCode(), ase.getErrorType(),
+                    ase.getRequestId());
         } catch (AmazonClientException ace) {
-            LOGGER.error("Caught an AmazonClientException.\n"
-                    + "Error Message: " + ace.getMessage());
+            LOGGER.error(AMAZON_CLIENT_EXCEPTION_MESSAGE, ace.getMessage());
+
         }
     }
 
@@ -415,7 +353,7 @@ public class AmazonS3Manager implements CloudManager {
      */
     public S3ObjectSummary getLatestBuildArtifact(String bucket, String key, Pattern pattern) {
         if (pattern == null) {
-            throw new RuntimeException("pattern is null!");
+            throw new IllegalArgumentException("pattern should not be null!");
         }
 
         S3ObjectSummary latestBuild = null;
@@ -427,10 +365,10 @@ public class AmazonS3Manager implements CloudManager {
         boolean isTruncated = false;
         // by default S3 return only 1000 objects summary so need while cycle here
         do {
-            LOGGER.info("looking for s3 artifact using iteration #" + i);
+            LOGGER.info("looking for s3 artifact using iteration #{}", i);
 
             for (S3ObjectSummary obj : objBuilds.getObjectSummaries()) {
-                LOGGER.debug("Existing S3 artifact: " + obj.getKey());
+                LOGGER.debug("Existing S3 artifact: {}", obj.getKey());
                 Matcher matcher = pattern.matcher(obj.getKey());
                 if (matcher.find()) {
                     if (latestBuild == null) {
@@ -447,9 +385,9 @@ public class AmazonS3Manager implements CloudManager {
         } while (isTruncated && ++i < limit);
 
         if (latestBuild == null) {
-            LOGGER.error("Unable to find S3 build artifact by pattern: " + pattern);
+            LOGGER.error("Unable to find S3 build artifact by pattern: {}", pattern);
         } else {
-            LOGGER.info("latest artifact: " + latestBuild.getKey());
+            LOGGER.info("latest artifact: {}", latestBuild.getKey());
         }
         return latestBuild;
     }
@@ -515,21 +453,6 @@ public class AmazonS3Manager implements CloudManager {
         generatePresignedUrlRequest.setMethod(HttpMethod.GET);
         generatePresignedUrlRequest.setExpiration(expiration);
 
-        URL url = s3client.generatePresignedUrl(generatePresignedUrlRequest);
-        return url;
+        return s3client.generatePresignedUrl(generatePresignedUrlRequest);
     }
-
-    /*
-     * public void read(S3Object s3object) {
-     * displayTextInputStream(s3object.getObjectContent()); }
-     *
-     * private void displayTextInputStream(InputStream input) { // Read one text
-     * line at a time and display. LOGGER.info("File content is: ");
-     * BufferedReader reader = new BufferedReader(new InputStreamReader(input));
-     * while (true) { String line = null; try { line = reader.readLine(); }
-     * catch (IOException e) { LOGGER.error("Failed to read file", e); } if
-     * (line == null) break;
-     *
-     * System.out.println("    " + line); } }
-     */
 }
