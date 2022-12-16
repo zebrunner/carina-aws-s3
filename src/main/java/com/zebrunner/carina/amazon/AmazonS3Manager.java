@@ -182,6 +182,19 @@ public class AmazonS3Manager implements IArtifactManager {
         if (Objects.isNull(url) || url.isEmpty()) {
             throw new IllegalArgumentException("Argument cannot be null or empty");
         }
+        /**
+         * Pre-sign headers (params in url):
+         *  X-Amz-Algorithm     - example   {@code AWS4-HMAC-SHA256}
+         * X-Amz-Credential    example   {@code some-aws-credential-to-identify-the-signer}
+         * X-Amz-Date         example   {@code timestamp-of-generation}
+         * X-Amz-Expires   example   {@code validity-from-generation-timestamp}
+         * X-Amz-Signature  example   {@code 4709da5a980e6abc4ab7284c1b6aa9e624f388e08f6a7609e28e5041a43e5dad}
+         * X-Amz-SignedHeaders example   {@code host}
+         */
+        if (url.contains("X-Amz-Date") || url.contains("X-Amz-Expires")) {
+            LOGGER.debug("AWS link '{}' already pre-sign", url);
+            return url;
+        }
         // get app path to be sure that we need(do not need) to download app
         // from s3 bucket
         AmazonS3URI amazonS3URI = new AmazonS3URI(url);
