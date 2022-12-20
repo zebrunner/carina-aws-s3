@@ -34,8 +34,8 @@ import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.amazonaws.services.s3.transfer.Download;
 import com.amazonaws.services.s3.transfer.TransferManagerBuilder;
+import com.zebrunner.carina.commons.artifact.IArtifactManager;
 import com.zebrunner.carina.utils.Configuration;
-import com.zebrunner.carina.utils.cloud.CloudManager;
 import com.zebrunner.carina.utils.common.CommonUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
@@ -51,9 +51,8 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class AmazonS3Manager implements CloudManager {
+public class AmazonS3Manager implements IArtifactManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
-    private static final Pattern S3_BUCKET_PATTERN = Pattern.compile("s3:\\/\\/([a-zA-Z-0-9][^\\/]*)\\/(.*)");
     private static final String AMAZON_SERVICE_EXCEPTION_MESSAGE = "Caught an AmazonServiceException, which means your request made it to Amazon S3, "
             + "but was rejected with an error response for some reason.\n"
             + "Error Message:    {}\n"
@@ -179,42 +178,50 @@ public class AmazonS3Manager implements CloudManager {
     }
 
     @Override
-    public String updateAppPath(String url) {
+    public String getDirectLink(String url) {
         if (Objects.isNull(url) || url.isEmpty()) {
             throw new IllegalArgumentException("Argument cannot be null or empty");
         }
+        /**
+         * Pre-sign headers (params in url):
+         *  X-Amz-Algorithm     - example   {@code AWS4-HMAC-SHA256}
+         * X-Amz-Credential    example   {@code some-aws-credential-to-identify-the-signer}
+         * X-Amz-Date         example   {@code timestamp-of-generation}
+         * X-Amz-Expires   example   {@code validity-from-generation-timestamp}
+         * X-Amz-Signature  example   {@code 4709da5a980e6abc4ab7284c1b6aa9e624f388e08f6a7609e28e5041a43e5dad}
+         * X-Amz-SignedHeaders example   {@code host}
+         */
+        if (url.contains("X-Amz-Date") || url.contains("X-Amz-Expires")) {
+            LOGGER.debug("AWS link '{}' already pre-sign", url);
+            return url;
+        }
         // get app path to be sure that we need(do not need) to download app
         // from s3 bucket
-        Matcher matcher = S3_BUCKET_PATTERN.matcher(url);
-        if (matcher.find()) {
-            String bucketName = matcher.group(1);
-            String key = matcher.group(2);
-            Pattern pattern = Pattern.compile(key);
-
-            // analyze if we have any pattern inside mobile_app to make extra
-            // search in AWS
-            int position = key.indexOf(".*");
-            if (position > 0) {
-                // /android/develop/dfgdfg.*/Mapmyrun.apk
-                int slashPosition = key.substring(0, position).lastIndexOf('/');
-                if (slashPosition > 0) {
-                    key = key.substring(0, slashPosition);
-                    S3ObjectSummary lastBuild = getLatestBuildArtifact(bucketName, key,
-                            pattern);
-                    key = lastBuild.getKey();
-                }
-
-            } else {
-                key = get(bucketName, key).getKey();
+        AmazonS3URI amazonS3URI = new AmazonS3URI(url);
+        String bucketName = amazonS3URI.getBucket();
+        String key = amazonS3URI.getKey();
+        Pattern pattern = Pattern.compile(key);
+        // analyze if we have any pattern inside mobile_app to make extra
+        // search in AWS
+        int position = key.indexOf(".*");
+        if (position > 0) {
+            // /android/develop/dfgdfg.*/Mapmyrun.apk
+            int slashPosition = key.substring(0, position).lastIndexOf('/');
+            if (slashPosition > 0) {
+                key = key.substring(0, slashPosition);
+                S3ObjectSummary lastBuild = getLatestBuildArtifact(bucketName, key,
+                        pattern);
+                key = lastBuild.getKey();
             }
-            LOGGER.info("next s3 app key will be used: {}", key);
 
-            // generate presign url explicitly to register link as run artifact
-            long hours = 72L * 1000 * 60 * 60; // generate presigned url for nearest 3 days
-            return AmazonS3Manager.getInstance().generatePreSignUrl(bucketName, key, hours).toString();
         } else {
-            throw new RuntimeException(String.format("Unable to parse '%s' path using S3 pattern", url));
+            key = get(bucketName, key).getKey();
         }
+        LOGGER.info("next s3 app key will be used: {}", key);
+
+        // generate presign url explicitly to register link as run artifact
+        long hours = 72L * 1000 * 60 * 60; // generate presigned url for nearest 3 days
+        return AmazonS3Manager.getInstance().generatePreSignUrl(bucketName, key, hours).toString();
     }
 
     /**
