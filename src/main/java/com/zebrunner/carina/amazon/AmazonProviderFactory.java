@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 
 @ArtifactManagerFactory
 public class AmazonProviderFactory implements IArtifactManagerFactory {
-    private static final Pattern AMAZON_S3_ENDPOINT_PATTERN = Pattern.compile("^(.+\\.)?s3[.-]([a-z0-9-]+)\\.");
+    private static final Pattern AMAZON_S3_ENDPOINT_PATTERN = Pattern.compile("s3:\\/\\/([a-zA-Z-0-9][^\\/]*)\\/(.*)");
 
     @Override
     public boolean isSuitable(String url) {
