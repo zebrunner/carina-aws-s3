@@ -34,6 +34,12 @@
             <organization>Zebrunner</organization>
             <organizationUrl>https://zebrunner.com</organizationUrl>
         </developer>
+        <developer>
+            <name>Andrei Kamarouski</name>
+            <email>akamarouski@zebrunner.com</email>
+            <organization>Zebrunner</organization>
+            <organizationUrl>https://zebrunner.com</organizationUrl>
+        </developer>
     </developers>
 
     <scm>
@@ -44,8 +50,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>11</java.version>
         <carina-utils.version>1.0.0</carina-utils.version>
-        <!-- todo change to release version -->
-        <carina-commons.version>1.0.0-SNAPSHOT</carina-commons.version>
+        <carina-commons.version>1.0.0</carina-commons.version>
 
         <slf4j.version>1.7.30</slf4j.version>
         <aws-java-sdk.version>1.11.923</aws-java-sdk.version>
@@ -59,21 +64,6 @@
         <maven-assembly-plugin.version>3.1.0</maven-assembly-plugin.version>
         <maven-gpg-plugin.version>1.6</maven-gpg-plugin.version>
     </properties>
-
-    <!-- TODO comment -->
-    <repositories>
-        <repository>
-            <id>zebrunner_snapshots</id>
-            <name>zebrunner Snapshots</name>
-            <url>https://nexus.zebrunner.dev/repository/ce-snapshots/</url>
-            <releases>
-                <enabled>false</enabled>
-            </releases>
-            <snapshots>
-                <enabled>true</enabled>
-            </snapshots>
-        </repository>
-    </repositories>
 
     <dependencies>
         <dependency>
