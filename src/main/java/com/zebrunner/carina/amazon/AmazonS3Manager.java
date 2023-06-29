@@ -34,9 +34,11 @@ import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.amazonaws.services.s3.transfer.Download;
 import com.amazonaws.services.s3.transfer.TransferManagerBuilder;
+import com.zebrunner.carina.amazon.config.AmazonConfiguration;
 import com.zebrunner.carina.commons.artifact.IArtifactManager;
-import com.zebrunner.carina.utils.Configuration;
 import com.zebrunner.carina.utils.common.CommonUtils;
+import com.zebrunner.carina.utils.config.Configuration;
+import com.zebrunner.carina.utils.config.StandardConfigurationOption;
 import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +50,7 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -73,18 +76,16 @@ public class AmazonS3Manager implements IArtifactManager {
             AmazonS3Manager amazonS3Manager = new AmazonS3Manager();
 
             AmazonS3ClientBuilder builder = AmazonS3ClientBuilder.standard();
-            String s3region = Configuration.get(Configuration.Parameter.S3_REGION);
-            if (!s3region.isEmpty()) {
-                builder.withRegion(Regions.fromName(s3region));
+            Configuration.get(AmazonConfiguration.Parameter.S3_REGION).ifPresent(region ->
+                    builder.withRegion(Regions.fromName(region))
+            );
+            Optional<String> accessKey = Configuration.get(AmazonConfiguration.Parameter.ACCESS_KEY_ID, StandardConfigurationOption.DECRYPT);
+            Optional<String> secretKey = Configuration.get(AmazonConfiguration.Parameter.SECRET_KEY, StandardConfigurationOption.DECRYPT);
+            if (accessKey.isPresent() && secretKey.isPresent()) {
+                builder.withCredentials(new AWSStaticCredentialsProvider(
+                                new BasicAWSCredentials(accessKey.get(), secretKey.get())))
+                        .build();
             }
-
-            String accessKey = Configuration.getDecrypted(Configuration.Parameter.ACCESS_KEY_ID);
-            String secretKey = Configuration.getDecrypted(Configuration.Parameter.SECRET_KEY);
-            if (!accessKey.isEmpty() && !secretKey.isEmpty()) {
-                BasicAWSCredentials creds = new BasicAWSCredentials(accessKey, secretKey);
-                builder.withCredentials(new AWSStaticCredentialsProvider(creds)).build();
-            }
-
             amazonS3Manager.s3client = builder.build();
             instance = amazonS3Manager;
         }
