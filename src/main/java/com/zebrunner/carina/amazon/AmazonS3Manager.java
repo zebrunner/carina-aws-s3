@@ -49,8 +49,10 @@ import java.lang.invoke.MethodHandles;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -65,33 +67,35 @@ public class AmazonS3Manager implements IArtifactManager {
             + "Request ID:       {}";
     private static final String AMAZON_CLIENT_EXCEPTION_MESSAGE = "Caught an AmazonClientException, which means the client encountered "
             + "an internal error while trying to communicate with S3, such as not being able to access the network.\nError Message: {}";
-    private static AmazonS3Manager instance = null;
-    private AmazonS3 s3client = null;
+
+    private static final Map<String, String> APP_DIRECT_LINK_MAP = new ConcurrentHashMap<>(3);
+
+    private final AmazonS3 s3client;
 
     private AmazonS3Manager() {
+        AmazonS3ClientBuilder builder = AmazonS3ClientBuilder.standard();
+        Configuration.get(AmazonConfiguration.Parameter.S3_REGION).ifPresent(region ->
+                builder.withRegion(Regions.fromName(region))
+        );
+        Optional<String> accessKey = Configuration.get(AmazonConfiguration.Parameter.ACCESS_KEY_ID, StandardConfigurationOption.DECRYPT);
+        Optional<String> secretKey = Configuration.get(AmazonConfiguration.Parameter.SECRET_KEY, StandardConfigurationOption.DECRYPT);
+        if (accessKey.isPresent() && secretKey.isPresent()) {
+            builder.withCredentials(new AWSStaticCredentialsProvider(
+                            new BasicAWSCredentials(accessKey.get(), secretKey.get())))
+                    .build();
+        }
+        s3client = builder.build();
     }
 
     public static synchronized AmazonS3Manager getInstance() {
-        if (instance == null) {
-            AmazonS3Manager amazonS3Manager = new AmazonS3Manager();
-
-            AmazonS3ClientBuilder builder = AmazonS3ClientBuilder.standard();
-            Configuration.get(AmazonConfiguration.Parameter.S3_REGION).ifPresent(region ->
-                    builder.withRegion(Regions.fromName(region))
-            );
-            Optional<String> accessKey = Configuration.get(AmazonConfiguration.Parameter.ACCESS_KEY_ID, StandardConfigurationOption.DECRYPT);
-            Optional<String> secretKey = Configuration.get(AmazonConfiguration.Parameter.SECRET_KEY, StandardConfigurationOption.DECRYPT);
-            if (accessKey.isPresent() && secretKey.isPresent()) {
-                builder.withCredentials(new AWSStaticCredentialsProvider(
-                                new BasicAWSCredentials(accessKey.get(), secretKey.get())))
-                        .build();
-            }
-            amazonS3Manager.s3client = builder.build();
-            instance = amazonS3Manager;
-        }
-        return instance;
+        return new AmazonS3Manager();
     }
 
+    /**
+     * Get S3 client
+     *
+     * @return {@link AmazonS3}
+     */
     public AmazonS3 getClient() {
         return s3client;
     }
@@ -108,8 +112,7 @@ public class AmazonS3Manager implements IArtifactManager {
         AmazonS3URI amazonS3URI = new AmazonS3URI(to);
         try {
             LOGGER.debug("Uploading a new object to S3 from a file: {}", from);
-            PutObjectRequest object = new PutObjectRequest(amazonS3URI.getBucket(), amazonS3URI.getKey(), from.toFile());
-            this.s3client.putObject(object);
+            s3client.putObject(new PutObjectRequest(amazonS3URI.getBucket(), amazonS3URI.getKey(), from.toFile()));
             LOGGER.debug("Uploaded to S3: '{}' with key '{}'", from, amazonS3URI.getKey());
             isSuccessful = true;
         } catch (AmazonServiceException ase) {
@@ -118,7 +121,7 @@ public class AmazonS3Manager implements IArtifactManager {
         } catch (AmazonClientException ace) {
             LOGGER.error(AMAZON_CLIENT_EXCEPTION_MESSAGE, ace.getMessage());
         } catch (Exception e) {
-            LOGGER.error("Something went wrong when try to put artifact to the Amazon S3.", e);
+            LOGGER.error("Unable put artifact to the Amazon S3. Cause: {}", e.getMessage(), e);
         }
         return isSuccessful;
     }
@@ -134,7 +137,7 @@ public class AmazonS3Manager implements IArtifactManager {
         LOGGER.info("[Bucket name: {}] [Key: {}] [File: {}].", amazonS3URI.getBucket(), amazonS3URI.getKey(), to.toAbsolutePath());
 
         Download appDownload = TransferManagerBuilder.standard()
-                .withS3Client(this.s3client)
+                .withS3Client(s3client)
                 .build()
                 .download(amazonS3URI.getBucket(), amazonS3URI.getKey(), to.toFile());
         try {
@@ -152,7 +155,7 @@ public class AmazonS3Manager implements IArtifactManager {
         } catch (AmazonClientException e) {
             LOGGER.error("File wasn't downloaded from s3.", e);
         } catch (Exception e) {
-            LOGGER.error("Something went wrong when try to download artifact from Amazon S3.", e);
+            LOGGER.error("Unable download artifact from Amazon S3. Cause: {}", e.getMessage(), e);
         }
         return isSuccessful;
     }
@@ -165,7 +168,7 @@ public class AmazonS3Manager implements IArtifactManager {
         boolean isSuccessful = false;
         AmazonS3URI amazonS3URI = new AmazonS3URI(url);
         try {
-            this.s3client.deleteObject(new DeleteObjectRequest(amazonS3URI.getBucket(), amazonS3URI.getKey()));
+            s3client.deleteObject(new DeleteObjectRequest(amazonS3URI.getBucket(), amazonS3URI.getKey()));
             isSuccessful = true;
         } catch (AmazonServiceException ase) {
             LOGGER.error(AMAZON_SERVICE_EXCEPTION_MESSAGE, ase.getMessage(), ase.getStatusCode(), ase.getErrorCode(), ase.getErrorType(),
@@ -173,65 +176,67 @@ public class AmazonS3Manager implements IArtifactManager {
         } catch (AmazonClientException ace) {
             LOGGER.error(AMAZON_CLIENT_EXCEPTION_MESSAGE, ace.getMessage());
         } catch (Exception e) {
-            LOGGER.error("Something went wrong when try to delete artifact from Amazon S3", e);
+            LOGGER.error("Unable delete artifact from Amazon S3. Cause: {}", e.getMessage(), e);
         }
         return isSuccessful;
     }
 
     @Override
-    public String getDirectLink(String url) {
-        if (Objects.isNull(url) || url.isEmpty()) {
-            throw new IllegalArgumentException("Argument cannot be null or empty");
+    public String getDirectLink(String originalLink) {
+        if (Objects.isNull(originalLink) || originalLink.isEmpty()) {
+            throw new IllegalArgumentException("Original link could not be null or empty.");
         }
-        /**
-         * Pre-sign headers (params in url):
-         *  X-Amz-Algorithm     - example   {@code AWS4-HMAC-SHA256}
-         * X-Amz-Credential    example   {@code some-aws-credential-to-identify-the-signer}
-         * X-Amz-Date         example   {@code timestamp-of-generation}
-         * X-Amz-Expires   example   {@code validity-from-generation-timestamp}
-         * X-Amz-Signature  example   {@code 4709da5a980e6abc4ab7284c1b6aa9e624f388e08f6a7609e28e5041a43e5dad}
-         * X-Amz-SignedHeaders example   {@code host}
-         */
-        if (url.contains("X-Amz-Date") || url.contains("X-Amz-Expires")) {
-            LOGGER.debug("AWS link '{}' already pre-sign", url);
-            return url;
-        }
-        // get app path to be sure that we need(do not need) to download app
-        // from s3 bucket
-        AmazonS3URI amazonS3URI = new AmazonS3URI(url);
-        String bucketName = amazonS3URI.getBucket();
-        String key = amazonS3URI.getKey();
-        Pattern pattern = Pattern.compile(key);
-        // analyze if we have any pattern inside mobile_app to make extra
-        // search in AWS
-        int position = key.indexOf(".*");
-        if (position > 0) {
-            // /android/develop/dfgdfg.*/Mapmyrun.apk
-            int slashPosition = key.substring(0, position).lastIndexOf('/');
-            if (slashPosition > 0) {
-                key = key.substring(0, slashPosition);
-                S3ObjectSummary lastBuild = getLatestBuildArtifact(bucketName, key,
-                        pattern);
-                key = lastBuild.getKey();
-            }
+        return APP_DIRECT_LINK_MAP.computeIfAbsent(originalLink,
+                link -> {
+                    /*
+                     * Pre-sign headers (params in url):
+                     *  X-Amz-Algorithm     - example   {@code AWS4-HMAC-SHA256}
+                     * X-Amz-Credential    example   {@code some-aws-credential-to-identify-the-signer}
+                     * X-Amz-Date         example   {@code timestamp-of-generation}
+                     * X-Amz-Expires   example   {@code validity-from-generation-timestamp}
+                     * X-Amz-Signature  example   {@code 4709da5a980e6abc4ab7284c1b6aa9e624f388e08f6a7609e28e5041a43e5dad}
+                     * X-Amz-SignedHeaders example   {@code host}
+                     */
+                    if (link.contains("X-Amz-Date") || link.contains("X-Amz-Expires")) {
+                        LOGGER.debug("AWS link '{}' already pre-sign", link);
+                        return link;
+                    }
+                    // get app path to be sure that we need(do not need) to download app
+                    // from s3 bucket
+                    AmazonS3URI amazonS3URI = new AmazonS3URI(link);
+                    String bucketName = amazonS3URI.getBucket();
+                    String key = amazonS3URI.getKey();
+                    Pattern pattern = Pattern.compile(key);
+                    // analyze if we have any pattern inside mobile_app to make extra
+                    // search in AWS
+                    int position = key.indexOf(".*");
+                    if (position > 0) {
+                        // /android/develop/dfgdfg.*/Mapmyrun.apk
+                        int slashPosition = key.substring(0, position).lastIndexOf('/');
+                        if (slashPosition > 0) {
+                            key = key.substring(0, slashPosition);
+                            S3ObjectSummary lastBuild = getLatestBuildArtifact(bucketName, key,
+                                    pattern);
+                            key = lastBuild.getKey();
+                        }
 
-        } else {
-            key = get(bucketName, key).getKey();
-        }
-        LOGGER.info("next s3 app key will be used: {}", key);
+                    } else {
+                        key = get(bucketName, key).getKey();
+                    }
+                    LOGGER.info("next s3 app key will be used: {}", key);
 
-        // generate presign url explicitly to register link as run artifact
-        long hours = 72L * 1000 * 60 * 60; // generate presigned url for nearest 3 days
-        return AmazonS3Manager.getInstance().generatePreSignUrl(bucketName, key, hours).toString();
+                    // generate presign url explicitly to register link as run artifact
+                    long hours = 72L * 1000 * 60 * 60; // generate presigned url for nearest 3 days
+                    return generatePreSignUrl(bucketName, key, hours).toString();
+                });
     }
 
     /**
      * Put any file to Amazon S3 storage.
      *
-     * @param bucket S3 bucket name
-     * @param key S3 storage path. Example: {@code DEMO/TestSuiteName/TestMethodName/file.txt}
+     * @param bucket   S3 bucket name
+     * @param key      S3 storage path. Example: {@code DEMO/TestSuiteName/TestMethodName/file.txt}
      * @param filePath local storage path. Example: {@code C:/Temp/file.txt}
-     *
      */
     public void put(String bucket, String key, String filePath) {
         put(bucket, key, filePath, null);
@@ -240,11 +245,10 @@ public class AmazonS3Manager implements IArtifactManager {
     /**
      * Put any file to Amazon S3 storage.
      *
-     * @param bucket S3 bucket name
-     * @param key S3 storage path. Example: {@code DEMO/TestSuiteName/TestMethodName/file.txt}
+     * @param bucket   S3 bucket name
+     * @param key      S3 storage path. Example: {@code DEMO/TestSuiteName/TestMethodName/file.txt}
      * @param filePath local storage path. Example: {@code C:/Temp/file.txt}
      * @param metadata custom tags metadata like name etc, see {@link ObjectMetadata}
-     *
      */
     public void put(String bucket, String key, String filePath, ObjectMetadata metadata) {
 
@@ -290,7 +294,7 @@ public class AmazonS3Manager implements IArtifactManager {
      * Get any file from Amazon S3 storage as S3Object.
      *
      * @param bucket S3 Bucket name.
-     * @param key S3 storage path. Example: {@code DEMO/TestSuiteName/TestMethodName/file.txt}
+     * @param key    S3 storage path. Example: {@code DEMO/TestSuiteName/TestMethodName/file.txt}
      * @return see {@link S3Object}
      */
     public S3Object get(String bucket, String key) {
@@ -330,7 +334,7 @@ public class AmazonS3Manager implements IArtifactManager {
      * Delete file from Amazon S3 storage.
      *
      * @param bucket S3 Bucket name.
-     * @param key S3 storage path. Example: {@code DEMO/TestSuiteName/TestMethodName/file.txt}
+     * @param key    S3 storage path. Example: {@code DEMO/TestSuiteName/TestMethodName/file.txt}
      */
     public void delete(String bucket, String key) {
         if (key == null) {
@@ -354,8 +358,8 @@ public class AmazonS3Manager implements IArtifactManager {
     /**
      * Get latest build artifact from Amazon S3 storage as S3Object.
      *
-     * @param bucket S3 Bucket name.
-     * @param key S3 storage path to your project. Example: {@code android/MyProject}
+     * @param bucket  S3 Bucket name.
+     * @param key     S3 storage path to your project. Example: {@code android/MyProject}
      * @param pattern pattern to find single build artifact Example: {@code .*prod-google-release.*}
      * @return see {@link S3ObjectSummary}
      */
@@ -404,8 +408,8 @@ public class AmazonS3Manager implements IArtifactManager {
      * Method to download file from s3 to local file system
      *
      * @param bucketName AWS S3 bucket name
-     * @param key (example: android/apkFolder/ApkName.apk)
-     * @param file (local file name)
+     * @param key        (example: android/apkFolder/ApkName.apk)
+     * @param file       (local file name)
      */
     public void download(final String bucketName, final String key, final File file) {
         download(bucketName, key, file, 10);
@@ -414,9 +418,9 @@ public class AmazonS3Manager implements IArtifactManager {
     /**
      * Method to download file from s3 to local file system
      *
-     * @param bucketName AWS S3 bucket name
-     * @param key (example: android/apkFolder/ApkName.apk)
-     * @param file (local file name)
+     * @param bucketName      AWS S3 bucket name
+     * @param key             (example: android/apkFolder/ApkName.apk)
+     * @param file            (local file name)
      * @param pollingInterval (polling interval in sec for S3 download status determination)
      */
     public void download(final String bucketName, final String key, final File file, long pollingInterval) {
@@ -446,8 +450,8 @@ public class AmazonS3Manager implements IArtifactManager {
      * Method to generate pre-signed object URL to s3 object
      *
      * @param bucketName AWS S3 bucket name
-     * @param key (example: {@code android/apkFolder/ApkName.apk})
-     * @param ms espiration time in ms, i.e. 1 hour is 1000*60*60
+     * @param key        (example: {@code android/apkFolder/ApkName.apk})
+     * @param ms         espiration time in ms, i.e. 1 hour is 1000*60*60
      * @return url String pre-signed URL
      */
     public URL generatePreSignUrl(final String bucketName, final String key, long ms) {
