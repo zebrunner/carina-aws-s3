@@ -77,3 +77,6 @@ jobs:
         run: mvn --batch-mode clean deploy -P release -Dgpg.passphrase="$GPG_PASSPHRASE"
         env:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          AWS_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
+          
