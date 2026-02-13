@@ -216,7 +216,16 @@ public class AmazonS3Manager implements IArtifactManager {
             }
 
         } else {
-            key = get(bucketName, key).getKey();
+            S3Object obj = null;
+            try {
+                obj = get(bucketName, key);
+                key = obj.getKey();
+            } finally {
+                if (obj != null) {
+                    try { obj.getObjectContent().abort(); } catch (Exception ignored) {}
+                    try { obj.close(); } catch (Exception ignored) {}
+                }
+            }
         }
         LOGGER.info("next s3 app key will be used: {}", key);
 
